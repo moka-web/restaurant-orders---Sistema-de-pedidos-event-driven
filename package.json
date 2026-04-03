@@ -1,0 +1,25 @@
+{
+  "name": "Sistema_de_Pedidos",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "build": "sam build --template infra/template.yaml",
+    "dev": "sam local start-api --template infra/template.yaml",
+    "test": "vitest run"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1021.0",
+    "@aws-sdk/lib-dynamodb": "^3.1021.0",
+    "uuid": "^13.0.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.4",
+    "vitest": "^4.1.2"
+  }
+}

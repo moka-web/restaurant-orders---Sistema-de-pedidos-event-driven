@@ -1,0 +1,39 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Sistema de Pedidos - Restaurant Order Management
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Architectures: [x86_64]
+    Environment:
+      Variables:
+        ORDERS_TABLE: !Ref OrdersTable
+
+Resources:
+  OrdersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: orders
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: orderId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: orderId
+          KeyType: HASH
+
+  CreateOrderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: src/functions/createOrder/handler.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref OrdersTable
+      Events:
+        CreateOrder:
+          Type: Api
+          Properties:
+            Path: /orders
+            Method: post
