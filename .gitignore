@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# AWS SAM build artifacts
+.aws-sam/
+
+# AWS credentials — NEVER commit these
+accesskey.txt
+*.pem
+*.key
+.env
+.env.*
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
