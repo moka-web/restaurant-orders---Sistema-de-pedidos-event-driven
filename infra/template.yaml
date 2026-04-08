@@ -2,6 +2,9 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: Sistema de Pedidos - Restaurant Order Management
 
+# Globals aplica a todas las Lambdas del template.
+# Las variables de entorno definidas acá están disponibles en process.env dentro de cada función.
+# Ref resuelve al nombre real del recurso en tiempo de deploy — no hardcodeamos nombres.
 Globals:
   Function:
     Runtime: nodejs20.x
@@ -9,8 +12,12 @@ Globals:
     Environment:
       Variables:
         ORDERS_TABLE: !Ref OrdersTable
+        EVENT_BUS_NAME: !Ref OrderEventBus
 
 Resources:
+  # Tabla DynamoDB donde se persisten las órdenes.
+  # PAY_PER_REQUEST = sin capacidad fija, se paga por operación. Ideal para cargas impredecibles.
+  # orderId es la partition key (HASH) — identifica unívocamente cada orden.
   OrdersTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -23,6 +30,19 @@ Resources:
         - AttributeName: orderId
           KeyType: HASH
 
+  # El bus de eventos central. Todos los eventos del sistema pasan por acá.
+  # EventBridge actúa como router: recibe eventos y los distribuye a los destinos
+  # que matcheen con las reglas definidas más abajo.
+  OrderEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: restaurant-orders-bus
+
+  # Lambda que recibe el POST /orders, valida, guarda en DynamoDB y publica el evento.
+  # Tiene dos políticas:
+  #   - DynamoDBCrudPolicy: permiso para leer/escribir en la tabla de órdenes
+  #   - EventBridgePutEventsPolicy: permiso para publicar eventos en el bus
+  # Sin estas políticas, Lambda tiraría un error 403 al intentar usar estos servicios.
   CreateOrderFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -31,9 +51,138 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref OrdersTable
+        - EventBridgePutEventsPolicy:
+            EventBusName: !Ref OrderEventBus
       Events:
         CreateOrder:
           Type: Api
           Properties:
             Path: /orders
             Method: post
+
+  # Dead Letter Queues (DLQs): reciben mensajes que fallaron 3 veces consecutivas.
+  # Son el seguro del sistema — ningún mensaje se pierde silenciosamente.
+  # La DLQ de KitchenQueue DEBE ser FIFO porque SQS exige que una FIFO queue
+  # tenga una DLQ FIFO. No se puede mezclar Standard con FIFO.
+  KitchenDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: kitchen-dlq.fifo
+      FifoQueue: true
+
+  BillingDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: billing-dlq
+
+  StockDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: stock-dlq
+
+  # Queue FIFO para la cocina — garantiza que los pedidos lleguen en orden.
+  # Crítico para la cocina: si la mesa 5 pide y luego modifica, deben procesarse en ese orden.
+  # ContentBasedDeduplication: SQS deduplica mensajes idénticos automáticamente en base al contenido.
+  # RedrivePolicy: después de 3 intentos fallidos, el mensaje va a la DLQ.
+  KitchenQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: kitchen-queue.fifo
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt KitchenDLQ.Arn
+        maxReceiveCount: 3
+
+  # Queue Standard para facturación — mayor throughput, orden no garantizado.
+  # Billing no necesita orden estricto: cada factura es independiente.
+  BillingQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: billing-queue
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt BillingDLQ.Arn
+        maxReceiveCount: 3
+
+  # Queue Standard para stock — igual que billing, el orden no importa.
+  # Cada mensaje descuenta ingredientes de forma independiente.
+  StockQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: stock-queue
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt StockDLQ.Arn
+        maxReceiveCount: 3
+
+  # Política IAM que autoriza a EventBridge a escribir mensajes en las tres queues.
+  # Sin esto, EventBridge no puede enviar nada a SQS aunque tenga las reglas configuradas.
+  # La condición ArnEquals restringe el acceso: solo este bus específico puede escribir,
+  # no cualquier servicio de AWS.
+  OrderEventBusToQueuesPolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref KitchenQueue
+        - !Ref BillingQueue
+        - !Ref StockQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource:
+              - !GetAtt KitchenQueue.Arn
+              - !GetAtt BillingQueue.Arn
+              - !GetAtt StockQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt OrderEventBus.Arn
+
+  # Reglas de ruteo: le dicen al bus qué hacer cuando llega un evento.
+  # Las tres escuchan el mismo patrón (source + detail-type) pero cada una
+  # apunta a una queue distinta — así el fan-out: un evento, tres destinos simultáneos.
+  #
+  # KitchenRule necesita MessageGroupId porque KitchenQueue es FIFO.
+  # SQS FIFO usa ese ID para agrupar y ordenar mensajes dentro del mismo grupo.
+  KitchenRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventBusName: !Ref OrderEventBus
+      EventPattern:
+        source:
+          - restaurant.orders
+        detail-type:
+          - order.created
+      Targets:
+        - Arn: !GetAtt KitchenQueue.Arn
+          Id: KitchenQueueTarget
+          SqsParameters:
+            MessageGroupId: order-created
+
+  BillingRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventBusName: !Ref OrderEventBus
+      EventPattern:
+        source:
+          - restaurant.orders
+        detail-type:
+          - order.created
+      Targets:
+        - Arn: !GetAtt BillingQueue.Arn
+          Id: BillingQueueTarget
+
+  StockRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventBusName: !Ref OrderEventBus
+      EventPattern:
+        source:
+          - restaurant.orders
+        detail-type:
+          - order.created
+      Targets:
+        - Arn: !GetAtt StockQueue.Arn
+          Id: StockQueueTarget
