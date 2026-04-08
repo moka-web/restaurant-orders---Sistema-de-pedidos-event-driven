@@ -2,6 +2,12 @@ import { PutCommand } from '@aws-sdk/lib-dynamodb'
 import { randomUUID } from 'crypto'
 import { dynamo } from '../../lib/dynamodb.js'
 import { createOrderSchema } from './schema.js'
+import { eventbridge } from '../../lib/eventbridge.js' // el nombre del archivo tiene que ser en minúscula para que funcione la importación, aunque el nombre de la variable sea eventbridge
+import { PutEventsCommand } from '@aws-sdk/client-eventbridge';
+
+
+//este handler es la función principal que se ejecuta cuando se recibe una solicitud para crear una orden.
+
 
 export const handler = async (event) => {
 
@@ -35,6 +41,25 @@ export const handler = async (event) => {
         TableName: process.env.ORDERS_TABLE,
         Item: order
       }))
+
+
+      //Cuando llamás eventbridge.send(new PutEventsCommand({...})), estás haciendo una llamada HTTP a la API de AWS EventBridge diciéndole: "publicá este evento en mi bus"
+      // funcion asincrona
+
+      await eventbridge.send( new PutEventsCommand({
+        Entries:[{
+          Source: 'restaurant.orders', //quien publica el evento 
+          DetailType: 'order.created', //que tipo de evento es 
+          Detail: JSON.stringify({
+           orderId : order.orderId,
+           tableId: order.tableId,
+           items:order.items,
+           createdAt: order.createdAt
+          }) , //el payload- DEBE ser un string , no un objeto 
+          EventBusName:process.env.EVENT_BUS_NAME //en que bus publicarlo
+        }]
+      }))
+
 
       return {
         statusCode: 201,
