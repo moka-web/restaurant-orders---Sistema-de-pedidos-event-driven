@@ -376,9 +376,8 @@ Todo el sistema de AWS se define en **`infra/template.yaml`** usando AWS SAM (Se
 ### Requisitos previos
 
 - Node.js 20+
-- Docker (para DynamoDB local y SAM local)
+- Docker Desktop
 - AWS SAM CLI
-- AWS CLI configurado (`aws configure`)
 
 ### Instalación
 
@@ -386,38 +385,75 @@ Todo el sistema de AWS se define en **`infra/template.yaml`** usando AWS SAM (Se
 npm install
 ```
 
-### Levantar DynamoDB local
+### 1. Levantar DynamoDB local
+
+Levantá el contenedor de DynamoDB local con Docker:
 
 ```bash
-docker-compose up -d
+docker run -d -p 8000:8000 amazon/dynamodb-local -jar DynamoDBLocal.jar -inMemory -sharedDb
 ```
 
-### Cargar stock inicial
+> **Nota:** `-inMemory` significa que los datos no persisten al reiniciar el contenedor. Hay que correr `npm run setup:local` cada vez que se reinicia Docker.
+
+### 2. Crear las tablas locales
 
 ```bash
-node scripts/seed-stock.js
+npm run setup:local
 ```
 
-### Correr el API localmente
+Este script crea la tabla `orders` en DynamoDB local. Si ya existe, la saltea sin error.
+
+### 3. Buildear el proyecto
 
 ```bash
-sam build --template infra/template.yaml
-sam local start-api --template infra/template.yaml
+npm run build
 ```
 
-### Simular un pedido
+### 4. Levantar el API localmente
 
 ```bash
-curl -X POST http://localhost:3000/orders \
-  -H "Content-Type: application/json" \
-  -d '{
-    "tableId": "mesa-5",
-    "items": [
-      { "id": "burger-01", "name": "Hamburguesa clásica", "quantity": 2, "price": 1200 },
-      { "id": "fries-01", "name": "Papas fritas", "quantity": 2, "price": 400 }
-    ]
-  }'
+npm run dev
 ```
+
+Esto levanta el API en `http://localhost:3000` apuntando a DynamoDB local. Las variables de entorno se cargan desde `env.dev.json`.
+
+> Para probar contra AWS real desde local: `npm run dev:prod`
+
+### 5. Simular un pedido
+
+Desde Postman o curl — POST a `http://localhost:3000/orders`:
+
+```json
+{
+  "tableId": "mesa-5",
+  "items": [
+    { "id": "burger-01", "name": "Hamburguesa clásica", "quantity": 2, "price": 1200 },
+    { "id": "fries-01", "name": "Papas fritas", "quantity": 2, "price": 400 }
+  ]
+}
+```
+
+Respuesta esperada (201):
+
+```json
+{
+  "orderId": "uuid-generado",
+  "tableId": "mesa-5",
+  "items": [...],
+  "status": "pending",
+  "createdAt": "2026-04-08T..."
+}
+```
+
+### Variables de entorno locales
+
+El archivo `env.dev.json` (no commiteado) define las variables para desarrollo local:
+
+| Variable | Valor local | Descripción |
+|---|---|---|
+| `ORDERS_TABLE` | `orders` | Nombre de la tabla DynamoDB |
+| `EVENT_BUS_NAME` | `restaurant-orders-bus` | Nombre del bus EventBridge |
+| `DYNAMODB_ENDPOINT` | `http://host.docker.internal:8000` | Endpoint de DynamoDB local |
 
 ### Correr tests
 

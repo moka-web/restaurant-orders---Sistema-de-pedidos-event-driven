@@ -9,10 +9,12 @@ Globals:
   Function:
     Runtime: nodejs20.x
     Architectures: [x86_64]
+    Timeout: 30
     Environment:
       Variables:
         ORDERS_TABLE: !Ref OrdersTable
         EVENT_BUS_NAME: !Ref OrderEventBus
+        DYNAMODB_ENDPOINT: ''
 
 Resources:
   # Tabla DynamoDB donde se persisten las órdenes.

@@ -10,6 +10,8 @@ accesskey.txt
 *.key
 .env
 .env.*
+env.dev.json
+env.prod.json
 
 # Logs
 *.log
