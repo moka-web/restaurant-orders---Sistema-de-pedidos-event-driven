@@ -7,7 +7,7 @@ import { PutEventsCommand } from '@aws-sdk/client-eventbridge';
 
 
 //este handler es la función principal que se ejecuta cuando se recibe una solicitud para crear una orden.
-
+// esto es una lambda function que se ejecuta en AWS Lambda, y se espera que reciba un evento con un body que contenga los datos de la orden a crear.
 
 export const handler = async (event) => {
 
@@ -44,21 +44,21 @@ export const handler = async (event) => {
 
 
       //Cuando llamás eventbridge.send(new PutEventsCommand({...})), estás haciendo una llamada HTTP a la API de AWS EventBridge diciéndole: "publicá este evento en mi bus"
-      // funcion asincrona
+      // funcion asincronamente
 
       await eventbridge.send( new PutEventsCommand({
         Entries:[{
           Source: 'restaurant.orders', //quien publica el evento 
           DetailType: 'order.created', //que tipo de evento es 
           Detail: JSON.stringify({
-           orderId : order.orderId,
-           tableId: order.tableId,
+           orderId : order.orderId, //orderId indica el ID de la orden creada
+           tableId: order.tableId,  // tableId indica el ID de la mesa para la cual se creó la orden
            items:order.items,
            createdAt: order.createdAt
           }) , //el payload- DEBE ser un string , no un objeto 
           EventBusName:process.env.EVENT_BUS_NAME //en que bus publicarlo
         }]
-      }))
+      }));
 
 
       return {

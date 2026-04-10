@@ -188,3 +188,23 @@ Resources:
       Targets:
         - Arn: !GetAtt StockQueue.Arn
           Id: StockQueueTarget
+
+  # Lambda que consume mensajes de KitchenQueue y actualiza el estado de la orden a "preparing".
+  # DynamoDBCrudPolicy le da permisos para hacer UpdateCommand sobre la tabla de órdenes.
+  # El EventSourceMapping (Type: SQS) es el vínculo entre la queue y este Lambda —
+  # cuando llega un mensaje a KitchenQueue, AWS invoca este handler automáticamente con event.Records.
+  KitchenConsumerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: src/functions/kitchenConsumer/handler.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref OrdersTable
+      Events:
+        KitchenQueueEvent:
+          Type: SQS
+          Properties:
+            # GetAtt resuelve el ARN real de la queue en tiempo de deploy.
+            # No hardcodeamos el ARN — lo referenciamos para que SAM lo resuelva solo.
+            Queue: !GetAtt KitchenQueue.Arn
