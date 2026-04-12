@@ -208,3 +208,20 @@ Resources:
             # GetAtt resuelve el ARN real de la queue en tiempo de deploy.
             # No hardcodeamos el ARN — lo referenciamos para que SAM lo resuelva solo.
             Queue: !GetAtt KitchenQueue.Arn
+
+  # Lambda que consume mensajes de BillingQueue y actualiza billingStatus a "billed".
+  # DynamoDBCrudPolicy le da permisos para hacer UpdateCommand sobre la tabla de órdenes.
+  # Cuando llega un mensaje a BillingQueue, AWS invoca este handler automáticamente con event.Records.
+  BillingConsumerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: src/functions/billingConsumer/handler.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref OrdersTable
+      Events:
+        BillingQueueEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt BillingQueue.Arn

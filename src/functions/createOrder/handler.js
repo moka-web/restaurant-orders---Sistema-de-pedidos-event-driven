@@ -30,7 +30,8 @@ export const handler = async (event) => {
         tableId: parsed.data.tableId,
         items: parsed.data.items,
         status: 'pending',
-        createdAt: new Date().toISOString()
+        billingStatus: 'pending',
+        createdAt: new Date().toISOString(),
       }
 
       // se envia un comando PutCommand a DynamoDB para guardar la orden en la tabla especificada por la variable de entorno ORDERS_TABLE. 
