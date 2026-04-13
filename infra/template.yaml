@@ -13,6 +13,7 @@ Globals:
     Environment:
       Variables:
         ORDERS_TABLE: !Ref OrdersTable
+        STOCK_TABLE: !Ref StockTable
         EVENT_BUS_NAME: !Ref OrderEventBus
         DYNAMODB_ENDPOINT: ''
 
@@ -30,6 +31,21 @@ Resources:
           AttributeType: S
       KeySchema:
         - AttributeName: orderId
+          KeyType: HASH
+
+  # Tabla DynamoDB para el inventario de platos.
+  # itemId es la partition key — identifica unívocamente cada plato.
+  # quantity = stock actual, threshold = mínimo antes de alertar.
+  StockTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: stock
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: itemId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: itemId
           KeyType: HASH
 
   # El bus de eventos central. Todos los eventos del sistema pasan por acá.
@@ -82,6 +98,19 @@ Resources:
     Properties:
       QueueName: stock-dlq
 
+  AlertDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: alert-dlq
+
+  AlertQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: alert-queue
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt AlertDLQ.Arn
+        maxReceiveCount: 3
+
   # Queue FIFO para la cocina — garantiza que los pedidos lleguen en orden.
   # Crítico para la cocina: si la mesa 5 pide y luego modifica, deben procesarse en ese orden.
   # ContentBasedDeduplication: SQS deduplica mensajes idénticos automáticamente en base al contenido.
@@ -116,7 +145,7 @@ Resources:
         deadLetterTargetArn: !GetAtt StockDLQ.Arn
         maxReceiveCount: 3
 
-  # Política IAM que autoriza a EventBridge a escribir mensajes en las tres queues.
+  # Política IAM que autoriza a EventBridge a escribir mensajes en las cuatro queues.
   # Sin esto, EventBridge no puede enviar nada a SQS aunque tenga las reglas configuradas.
   # La condición ArnEquals restringe el acceso: solo este bus específico puede escribir,
   # no cualquier servicio de AWS.
@@ -127,6 +156,7 @@ Resources:
         - !Ref KitchenQueue
         - !Ref BillingQueue
         - !Ref StockQueue
+        - !Ref AlertQueue
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -138,6 +168,7 @@ Resources:
               - !GetAtt KitchenQueue.Arn
               - !GetAtt BillingQueue.Arn
               - !GetAtt StockQueue.Arn
+              - !GetAtt AlertQueue.Arn
             Condition:
               ArnEquals:
                 aws:SourceArn: !GetAtt OrderEventBus.Arn
@@ -189,6 +220,20 @@ Resources:
         - Arn: !GetAtt StockQueue.Arn
           Id: StockQueueTarget
 
+  # Regla que rutea eventos stock.low a AlertQueue para notificar al equipo.
+  StockLowRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventBusName: !Ref OrderEventBus
+      EventPattern:
+        source:
+          - restaurant.stock
+        detail-type:
+          - stock.low
+      Targets:
+        - Arn: !GetAtt AlertQueue.Arn
+          Id: AlertQueueTarget
+
   # Lambda que consume mensajes de KitchenQueue y actualiza el estado de la orden a "preparing".
   # DynamoDBCrudPolicy le da permisos para hacer UpdateCommand sobre la tabla de órdenes.
   # El EventSourceMapping (Type: SQS) es el vínculo entre la queue y este Lambda —
@@ -225,3 +270,34 @@ Resources:
           Type: SQS
           Properties:
             Queue: !GetAtt BillingQueue.Arn
+
+  # Lambda que consume mensajes de StockQueue, descuenta stock y publica stock.low si corresponde.
+  # DynamoDBCrudPolicy: lee y actualiza stock en StockTable.
+  # EventBridgePutEventsPolicy: publica stock.low al bus cuando el stock está bajo.
+  StockConsumerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: src/functions/stockConsumer/handler.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref StockTable
+        - EventBridgePutEventsPolicy:
+            EventBusName: !Ref OrderEventBus
+      Events:
+        StockQueueEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt StockQueue.Arn
+
+  # Lambda que consume mensajes de AlertQueue y loguea alertas de stock bajo.
+  AlertConsumerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../
+      Handler: src/functions/alertConsumer/handler.handler
+      Events:
+        AlertQueueEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt AlertQueue.Arn

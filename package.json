@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "setup:local": "node scripts/setup-local.js",
+    "seed:stock": "node scripts/seed-stock.js",
     "build": "sam build --template infra/template.yaml",
     "dev": "sam local start-api --template infra/template.yaml --env-vars env.dev.json",
     "dev:prod": "sam local start-api --template infra/template.yaml --env-vars env.prod.json",
