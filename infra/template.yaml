@@ -14,6 +14,7 @@ Globals:
       Variables:
         ORDERS_TABLE: !Ref OrdersTable
         STOCK_TABLE: !Ref StockTable
+        ALERTS_TABLE: !Ref AlertsTable
         EVENT_BUS_NAME: !Ref OrderEventBus
         DYNAMODB_ENDPOINT: ''
 
@@ -46,6 +47,21 @@ Resources:
           AttributeType: S
       KeySchema:
         - AttributeName: itemId
+          KeyType: HASH
+
+  # Tabla DynamoDB para almacenar alertas de stock bajo.
+  # Se guarda historial de alertas generadas cuando el stock cae por debajo del threshold.
+  # alertId = partition key (compuesto de itemId + timestamp para unicidad).
+  AlertsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: alerts
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: alertId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: alertId
           KeyType: HASH
 
   # El bus de eventos central. Todos los eventos del sistema pasan por acá.
@@ -291,11 +307,15 @@ Resources:
             Queue: !GetAtt StockQueue.Arn
 
   # Lambda que consume mensajes de AlertQueue y loguea alertas de stock bajo.
+  # DynamoDBCrudPolicy: permiso para escribir alertas en AlertsTable.
   AlertConsumerFunction:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: ../
       Handler: src/functions/alertConsumer/handler.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AlertsTable
       Events:
         AlertQueueEvent:
           Type: SQS

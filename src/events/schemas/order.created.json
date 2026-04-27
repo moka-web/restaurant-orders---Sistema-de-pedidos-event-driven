@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "order.created",
+  "description": "Evento publicado cuando se crea una nueva orden en el sistema",
+  "type": "object",
+  "properties": {
+    "source": {
+      "type": "string",
+      "const": "restaurant.orders"
+    },
+    "detail-type": {
+      "type": "string",
+      "const": "order.created"
+    },
+    "detail": {
+      "type": "object",
+      "properties": {
+        "orderId": {
+          "type": "string",
+          "description": "UUID único de la orden"
+        },
+        "tableId": {
+          "type": "string",
+          "description": "Identificador de la mesa"
+        },
+        "items": {
+          "type": "array",
+          "description": "Lista de items pedidos",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "ID del item/plato"
+              },
+              "name": {
+                "type": "string",
+                "description": "Nombre del plato"
+              },
+              "quantity": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": ["id", "name", "quantity"]
+          }
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp ISO8601 de creación"
+        }
+      },
+      "required": ["orderId", "tableId", "items", "createdAt"]
+    }
+  },
+  "required": ["source", "detail-type", "detail"]
+}
